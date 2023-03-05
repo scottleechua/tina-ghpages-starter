@@ -1,0 +1,22 @@
+{
+  "name": "tina-jekyll-starter",
+  "version": "1.0.0",
+  "description": "Starter template for using TinaCMS with Jekyll",
+  "homepage": "https://scottleechua.github.io/tina-jekyll-starter",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "tinacms dev -c \"bundle exec jekyll serve\"",
+    "build": "tinacms build && jekyll build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@tinacms/cli": "^1.2.2",
+    "tinacms": "^1.2.2"
+  },
+  "devDependencies": {
+    "gh-pages": "^5.0.0"
+  }
+}
