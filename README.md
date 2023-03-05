@@ -27,5 +27,6 @@ A starter template for using TinaCMS with [GitHub Pages](https://docs.github.com
 - Doesn't work with [project sites](https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages), only user sites.
 
 ## Acknowledgements
+- Starter template by [Scott Lee Chua](https://scottleechua.com).
 - Many thanks to Huw Fulcher for their blog post ["How to integrate TinaCMS with Jekyll"](https://huwfulcher.com/blog/2022/how-to-integrate-tinacms-with-jekyll/), without which this template would not exist.
 - Thanks to Parker Moore and the contributors to [Minima](https://github.com/jekyll/minima), the Jekyll default theme.
