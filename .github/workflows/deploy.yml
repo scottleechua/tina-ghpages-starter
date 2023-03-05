@@ -28,7 +28,7 @@ jobs:
         echo "DEPLOY_BRANCH=gh-pages" >> $GITHUB_OUTPUT
     - name: Deploy website
       env:
-        HEAD: source
+        HEAD: main
         CLIENT_ID: ${{ secrets.CLIENT_ID }}
         READ_TOKEN: ${{ secrets.READ_TOKEN }}
       run:  yes | bin/deploy --verbose ${{ steps.setup.outputs.NO_PUSH }}
