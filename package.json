@@ -2,7 +2,6 @@
   "name": "tina-jekyll-starter",
   "version": "1.0.0",
   "description": "Starter template for using TinaCMS with Jekyll",
-  "homepage": "https://scottleechua.github.io/tina-jekyll-starter",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
