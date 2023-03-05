@@ -27,6 +27,12 @@ export default defineConfig({
         fields: [
           {
             type: "string",
+            name: "layout",
+            label: "Layout",
+            required: true,
+          },
+          {
+            type: "string",
             name: "title",
             label: "Title",
             isTitle: true,
@@ -48,9 +54,21 @@ export default defineConfig({
         fields: [
           {
             type: "string",
+            name: "layout",
+            label: "Layout",
+            required: true,
+          },
+          {
+            type: "string",
             name: "title",
             label: "Title",
             isTitle: true,
+            required: true,
+          },
+          {
+            type: "string",
+            name: "permalink",
+            label: "Permalink",
             required: true,
           },
           {
