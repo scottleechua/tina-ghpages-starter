@@ -6,7 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "tinacms dev -c \"bundle exec jekyll serve\"",
-    "build": "tinacms build && jekyll build"
+    "build": "yarn run tinacms build && bundle exec jekyll build"
   },
   "keywords": [],
   "author": "",
