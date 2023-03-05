@@ -39,12 +39,38 @@ export default defineConfig({
             required: true,
           },
           {
+            type: "datetime",
+            name: "date",
+            label: "Date",
+            required: true,
+          },
+          {
+            type: "string",
+            name: "categories",
+            label: "Categories",
+          },
+          {
             type: "rich-text",
             name: "body",
             label: "Body",
             isBody: true,
           },
         ],
+        ui: {
+          filename: {
+            readonly: true,
+            slugify: values => {
+              const date = new Date();
+              const day = date.getDate();
+              const month = date.getMonth() + 1;
+              const year = date.getFullYear();
+        
+              let currentDate = `${year}-${month}-${day}`;
+        
+              return `${currentDate}-${values?.title?.toLowerCase().replace(/ /g, '-')}`
+            }
+          }
+        },
       },
       {
         name: "page",
@@ -78,6 +104,14 @@ export default defineConfig({
             isBody: true,
           },
         ],
+        ui: {
+          filename: {
+            readonly: true,
+            slugify: values => {        
+              return `${values?.title?.toLowerCase().replace(/ /g, '-')}`
+            }
+          }
+        },
       },
     ],
   },
