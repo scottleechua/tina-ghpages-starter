@@ -15,7 +15,4 @@
     "@tinacms/cli": "^1.2.2",
     "tinacms": "^1.2.2"
   },
-  "devDependencies": {
-    "gh-pages": "^5.0.0"
-  }
 }
