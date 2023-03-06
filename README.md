@@ -25,6 +25,7 @@ A starter template for using TinaCMS with [GitHub Pages](https://docs.github.com
 
 ## Known Issues
 - Doesn't work with [project sites](https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages), only user sites.
+- Missing instructions on local development, i.e. dependencies and setup.
 - Missing instructions on changing Jekyll theme, and tips for further customization.
 
 ## Contributing
