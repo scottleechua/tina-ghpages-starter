@@ -27,7 +27,6 @@ A starter template for using TinaCMS with [GitHub Pages](https://docs.github.com
 
 **Tina on GitHub Pages**
 - Doesn't work with [project sites](https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages), only user sites.
-- Errors parsing markdown: almost always have to edit content in `raw-mode`.
 
 **Template**
 - Missing instructions on local development, i.e. dependencies and setup.
