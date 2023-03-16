@@ -9,12 +9,12 @@ export default defineConfig({
   token: process.env.READ_TOKEN,
   build: {
     outputFolder: "admin",
-    publicFolder: "./",
+    publicFolder: "/",
   },
   media: {
     tina: {
       mediaRoot: "",
-      publicFolder: "./",
+      publicFolder: "/",
     },
   },
   schema: {
