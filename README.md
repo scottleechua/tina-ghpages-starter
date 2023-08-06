@@ -37,5 +37,5 @@ Pull requests, issues, and feedback are all more than welcome!
 
 ## Acknowledgements
 - This starter template by [Scott Lee Chua](https://scottleechua.com).
-- Many thanks to Huw Fulcher for their blog post ["How to integrate TinaCMS with Jekyll"](https://huwfulcher.com/blog/2022/how-to-integrate-tinacms-with-jekyll/), without which this template would not exist.
+- Many thanks to Huw Fulcher for their blog post ["How to integrate TinaCMS with Jekyll"](https://huwfulcher.com/blog/2022-11-10-how-to-integrate-tinacms-with-jekyll/), without which this template would not exist.
 - Thanks to Parker Moore and the contributors to [Minima](https://github.com/jekyll/minima), the Jekyll default theme.
