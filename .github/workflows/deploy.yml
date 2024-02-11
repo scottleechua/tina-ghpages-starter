@@ -23,13 +23,13 @@ jobs:
         bundler-cache: true
     - name: Install deps
       run: |
-        yarn install --immutable
+        npm ci
     - name: Build site
       env:
         CLIENT_ID: ${{ secrets.CLIENT_ID }}
         READ_TOKEN: ${{ secrets.READ_TOKEN }}
       run: |
-        yarn run tinacms build && bundle exec jekyll build
+        npm run tinacms build && bundle exec jekyll build
     - name: Deploy
       uses: JamesIves/github-pages-deploy-action@v4
       env:
