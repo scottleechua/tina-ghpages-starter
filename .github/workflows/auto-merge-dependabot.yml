@@ -10,6 +10,7 @@ on:
 permissions:
   pull-requests: write
   checks: read
+  actions: read
 
 jobs:
   dependabot:
@@ -89,9 +90,19 @@ jobs:
           script: |
             const prNumber = parseInt('${{ steps.pr_number.outputs.number }}');
             const workflowName = '${{ github.workflow }}';
+            const currentRunId = ${{ github.run_id }};
             const maxWait = 300; // 5 minutes max wait
             const checkInterval = 10; // Check every 10 seconds
             let waited = 0;
+            
+            // Get the current workflow run to identify its check suite
+            const { data: currentRun } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: currentRunId
+            });
+            
+            const currentCheckSuiteId = currentRun.check_suite_id;
             
             while (waited < maxWait) {
               const { data: pr } = await github.rest.pulls.get({
@@ -114,12 +125,20 @@ jobs:
                 ref: pr.head.sha
               });
               
-              // Filter out this workflow's check runs
-              const otherCheckRuns = checkRuns.check_runs.filter(run => 
-                run.name !== workflowName && 
-                !run.name.includes('Auto-Approve Dependabot PRs') &&
-                !run.name.includes('Dependabot auto-approve')
-              );
+              // Filter out this workflow's check runs by check suite ID and name
+              const otherCheckRuns = checkRuns.check_runs.filter(run => {
+                // Exclude check runs from the same check suite (this workflow)
+                if (run.check_suite && run.check_suite.id === currentCheckSuiteId) {
+                  return false;
+                }
+                // Also exclude by name as a fallback
+                if (run.name === workflowName || 
+                    run.name.includes('Auto-Approve Dependabot PRs') ||
+                    run.name.includes('Dependabot auto-approve')) {
+                  return false;
+                }
+                return true;
+              });
               
               // Get combined status (excluding this workflow)
               const { data: status } = await github.rest.repos.getCombinedStatusForRef({
