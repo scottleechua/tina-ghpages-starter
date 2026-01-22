@@ -1,94 +1,36 @@
 name: Auto-Approve Dependabot PRs
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened]
-  check_suite:
-    types: [completed]
-  status: {}
 
 permissions:
   pull-requests: write
   checks: read
-  actions: read
 
 jobs:
   dependabot:
     runs-on: ubuntu-latest
-    if: |
-      (github.event.pull_request.user.login == 'dependabot[bot]' || 
-       github.event.pull_request.user.login == 'dependabot-preview[bot]') ||
-      github.event_name == 'check_suite' ||
-      github.event_name == 'status'
+    # Only run for Dependabot PRs
+    if: github.event.pull_request.user.login == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot-preview[bot]'
     steps:
       - name: Dependabot metadata
         id: metadata
         uses: dependabot/fetch-metadata@v1
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
-
-      - name: Get PR number and verify Dependabot
+      
+      - name: Get PR number
         id: pr_number
-        uses: actions/github-script@v7
-        with:
-          script: |
-            let prNumber;
-            let pr;
-            
-            if (context.payload.pull_request?.number) {
-              prNumber = context.payload.pull_request.number;
-            } else {
-              // For check_suite and status events, find PR by commit SHA
-              const sha = context.payload.check_suite?.head_sha || 
-                          context.payload.commit?.sha || 
-                          context.sha;
-              
-              if (sha) {
-                const { data: prsByCommit } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  commit_sha: sha
-                });
-                
-                const openPR = prsByCommit.find(pr => pr.state === 'open');
-                if (openPR) {
-                  prNumber = openPR.number;
-                }
-              }
-            }
-            
-            if (!prNumber) {
-              core.info('Could not find PR number, skipping...');
-              core.setOutput('is_dependabot', 'false');
-              return;
-            }
-            
-            // Get PR details to verify it's from Dependabot
-            pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber
-            });
-            
-            const isDependabot = pr.data.user.login === 'dependabot[bot]' || 
-                                 pr.data.user.login === 'dependabot-preview[bot]';
-            
-            if (!isDependabot) {
-              core.info(`PR #${prNumber} is not from Dependabot, skipping...`);
-              core.setOutput('is_dependabot', 'false');
-              return;
-            }
-            
-            core.setOutput('is_dependabot', 'true');
-            core.setOutput('number', prNumber.toString());
+        run: |
+          echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
 
       - name: Wait for merge button to be available
-        if: steps.pr_number.outputs.is_dependabot == 'true'
         uses: actions/github-script@v7
         id: verify
         with:
           script: |
-            const prNumber = parseInt('${{ steps.pr_number.outputs.number }}');
+            const prNumber = ${{ github.event.pull_request.number }};
             const maxWait = 300; // 5 minutes max wait
             const checkInterval = 10; // Check every 10 seconds
             let waited = 0;
@@ -104,12 +46,23 @@ jobs:
               // Check if merge button is available
               // mergeable_state: 'clean' = ready to merge (all checks passed, no conflicts)
               // mergeable_state: 'dirty' = has conflicts
-              // mergeable_state: 'unstable' = checks are still running or failed
+              // mergeable_state: 'unstable' = checks are still running or some non-required checks failed
+              //   - If mergeable=true: PR can be merged (required checks passed, optional may be pending/failed)
+              //   - If mergeable=false: checks likely failed
               // mergeable_state: 'blocked' = blocked by branch protection
               // mergeable_state: null = GitHub is still computing mergeability
               
+              // Approve if mergeable and state is 'clean' (all checks passed)
               if (pr.mergeable === true && pr.mergeable_state === 'clean') {
-                core.info('Merge button is available - PR is ready to merge!');
+                core.info('Merge button is available - PR is ready to merge! (all checks passed)');
+                core.setOutput('can_approve', 'true');
+                return;
+              }
+              
+              // Approve if mergeable and state is 'unstable' (required checks passed, optional may be pending)
+              // This means the PR can be merged even if some non-required checks haven't completed
+              if (pr.mergeable === true && pr.mergeable_state === 'unstable') {
+                core.info('PR is mergeable but some checks may still be running (unstable state) - approving');
                 core.setOutput('can_approve', 'true');
                 return;
               }
@@ -144,5 +97,5 @@ jobs:
         run: |
           gh pr review --approve "$PR_URL"
         env:
-          PR_URL: ${{ github.event.pull_request.html_url || format('https://github.com/{0}/pull/{1}', github.repository, steps.pr_number.outputs.number) }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
