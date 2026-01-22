@@ -1,4 +1,4 @@
-name: Dependabot auto-approve
+name: Auto-Approve Dependabot PRs
 
 on:
   pull_request:
@@ -88,6 +88,7 @@ jobs:
         with:
           script: |
             const prNumber = parseInt('${{ steps.pr_number.outputs.number }}');
+            const workflowName = '${{ github.workflow }}';
             const maxWait = 300; // 5 minutes max wait
             const checkInterval = 10; // Check every 10 seconds
             let waited = 0;
@@ -106,13 +107,6 @@ jobs:
                 return;
               }
               
-              // Get combined status
-              const { data: status } = await github.rest.repos.getCombinedStatusForRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: pr.head.sha
-              });
-              
               // Get check runs
               const { data: checkRuns } = await github.rest.checks.listForRef({
                 owner: context.repo.owner,
@@ -120,27 +114,70 @@ jobs:
                 ref: pr.head.sha
               });
               
-              const allChecksPassed = 
-                status.state === 'success' &&
-                checkRuns.check_runs.every(run => 
+              // Filter out this workflow's check runs
+              const otherCheckRuns = checkRuns.check_runs.filter(run => 
+                run.name !== workflowName && 
+                !run.name.includes('Auto-Approve Dependabot PRs') &&
+                !run.name.includes('Dependabot auto-approve')
+              );
+              
+              // Get combined status (excluding this workflow)
+              const { data: status } = await github.rest.repos.getCombinedStatusForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: pr.head.sha
+              });
+              
+              // Filter status checks to exclude this workflow
+              const otherStatusChecks = status.statuses.filter(status => 
+                status.context !== workflowName &&
+                !status.context.includes('Auto-Approve Dependabot PRs') &&
+                !status.context.includes('Dependabot auto-approve')
+              );
+              
+              // Check if all other check runs have passed
+              const allOtherCheckRunsPassed = otherCheckRuns.length === 0 || 
+                otherCheckRuns.every(run => 
                   run.status === 'completed' && 
                   (run.conclusion === 'success' || run.conclusion === 'skipped')
                 );
               
-              if (allChecksPassed && pr.mergeable === true) {
-                core.info('All checks passed and PR is mergeable!');
+              // Check if all other status checks have passed
+              // Calculate combined state from filtered statuses only
+              const otherStatusStates = otherStatusChecks.map(s => s.state);
+              const allOtherStatusChecksPassed = otherStatusChecks.length === 0 ||
+                (otherStatusStates.every(state => state === 'success') && 
+                 !otherStatusStates.includes('failure') && 
+                 !otherStatusStates.includes('error'));
+              
+              // If there are no other checks, we can approve immediately if mergeable
+              if (otherCheckRuns.length === 0 && otherStatusChecks.length === 0 && pr.mergeable === true) {
+                core.info('No other checks found, PR is mergeable!');
                 core.setOutput('can_approve', 'true');
                 return;
               }
               
-              // If status is failure, don't wait
-              if (status.state === 'failure') {
-                core.info('Status checks failed');
+              if (allOtherCheckRunsPassed && allOtherStatusChecksPassed && pr.mergeable === true) {
+                core.info('All other checks passed and PR is mergeable!');
+                core.setOutput('can_approve', 'true');
+                return;
+              }
+              
+              // If any check failed, don't wait
+              const hasFailedCheck = otherCheckRuns.some(run => 
+                run.status === 'completed' && run.conclusion === 'failure'
+              ) || otherStatusChecks.some(status => status.state === 'failure' || status.state === 'error');
+              
+              if (hasFailedCheck) {
+                core.info('Some checks failed');
                 core.setOutput('can_approve', 'false');
                 return;
               }
               
-              core.info(`Waiting for checks to complete... (waited ${waited}s)`);
+              const pendingCount = otherCheckRuns.filter(run => run.status !== 'completed').length +
+                                   otherStatusChecks.filter(status => status.state === 'pending').length;
+              
+              core.info(`Waiting for ${pendingCount} check(s) to complete... (waited ${waited}s)`);
               await new Promise(resolve => setTimeout(resolve, checkInterval * 1000));
               waited += checkInterval;
             }
