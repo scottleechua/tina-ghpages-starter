@@ -104,34 +104,96 @@ jobs:
             
             const currentCheckSuiteId = currentRun.check_suite_id;
             
+            // Get initial PR state
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            
+            // Check if PR is mergeable (no conflicts)
+            if (pr.mergeable === false) {
+              core.info('PR is not mergeable (has conflicts)');
+              core.setOutput('can_approve', 'false');
+              return;
+            }
+            
+            // Get check runs
+            const { data: checkRuns } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: pr.head.sha
+            });
+            
+            // Filter out this workflow's check runs by check suite ID and name
+            const otherCheckRuns = checkRuns.check_runs.filter(run => {
+              // Exclude check runs from the same check suite (this workflow)
+              if (run.check_suite && run.check_suite.id === currentCheckSuiteId) {
+                return false;
+              }
+              // Also exclude by name as a fallback
+              if (run.name === workflowName || 
+                  run.name.includes('Auto-Approve Dependabot PRs') ||
+                  run.name.includes('Dependabot auto-approve')) {
+                return false;
+              }
+              return true;
+            });
+            
+            // Get combined status (excluding this workflow)
+            const { data: status } = await github.rest.repos.getCombinedStatusForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: pr.head.sha
+            });
+            
+            // Filter status checks to exclude this workflow
+            const otherStatusChecks = status.statuses.filter(status => 
+              status.context !== workflowName &&
+              !status.context.includes('Auto-Approve Dependabot PRs') &&
+              !status.context.includes('Dependabot auto-approve')
+            );
+            
+            // If there are no other checks, approve immediately if mergeable
+            if (otherCheckRuns.length === 0 && otherStatusChecks.length === 0) {
+              if (pr.mergeable === true) {
+                core.info('No other checks found, PR is mergeable - approving immediately!');
+                core.setOutput('can_approve', 'true');
+                return;
+              } else {
+                core.info('No other checks found but PR is not mergeable');
+                core.setOutput('can_approve', 'false');
+                return;
+              }
+            }
+            
+            core.info(`Found ${otherCheckRuns.length} check run(s) and ${otherStatusChecks.length} status check(s) to wait for`);
+            
+            // Wait for other checks to complete
             while (waited < maxWait) {
-              const { data: pr } = await github.rest.pulls.get({
+              const { data: currentPr } = await github.rest.pulls.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: prNumber
               });
               
-              // Check if PR is mergeable (no conflicts)
-              if (pr.mergeable === false) {
+              if (currentPr.mergeable === false) {
                 core.info('PR is not mergeable (has conflicts)');
                 core.setOutput('can_approve', 'false');
                 return;
               }
               
-              // Get check runs
-              const { data: checkRuns } = await github.rest.checks.listForRef({
+              // Get updated check runs
+              const { data: updatedCheckRuns } = await github.rest.checks.listForRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                ref: pr.head.sha
+                ref: currentPr.head.sha
               });
               
-              // Filter out this workflow's check runs by check suite ID and name
-              const otherCheckRuns = checkRuns.check_runs.filter(run => {
-                // Exclude check runs from the same check suite (this workflow)
+              const updatedOtherCheckRuns = updatedCheckRuns.check_runs.filter(run => {
                 if (run.check_suite && run.check_suite.id === currentCheckSuiteId) {
                   return false;
                 }
-                // Also exclude by name as a fallback
                 if (run.name === workflowName || 
                     run.name.includes('Auto-Approve Dependabot PRs') ||
                     run.name.includes('Dependabot auto-approve')) {
@@ -140,52 +202,43 @@ jobs:
                 return true;
               });
               
-              // Get combined status (excluding this workflow)
-              const { data: status } = await github.rest.repos.getCombinedStatusForRef({
+              // Get updated status
+              const { data: updatedStatus } = await github.rest.repos.getCombinedStatusForRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                ref: pr.head.sha
+                ref: currentPr.head.sha
               });
               
-              // Filter status checks to exclude this workflow
-              const otherStatusChecks = status.statuses.filter(status => 
+              const updatedOtherStatusChecks = updatedStatus.statuses.filter(status => 
                 status.context !== workflowName &&
                 !status.context.includes('Auto-Approve Dependabot PRs') &&
                 !status.context.includes('Dependabot auto-approve')
               );
               
               // Check if all other check runs have passed
-              const allOtherCheckRunsPassed = otherCheckRuns.length === 0 || 
-                otherCheckRuns.every(run => 
+              const allOtherCheckRunsPassed = updatedOtherCheckRuns.length === 0 || 
+                updatedOtherCheckRuns.every(run => 
                   run.status === 'completed' && 
                   (run.conclusion === 'success' || run.conclusion === 'skipped')
                 );
               
               // Check if all other status checks have passed
-              // Calculate combined state from filtered statuses only
-              const otherStatusStates = otherStatusChecks.map(s => s.state);
-              const allOtherStatusChecksPassed = otherStatusChecks.length === 0 ||
+              const otherStatusStates = updatedOtherStatusChecks.map(s => s.state);
+              const allOtherStatusChecksPassed = updatedOtherStatusChecks.length === 0 ||
                 (otherStatusStates.every(state => state === 'success') && 
                  !otherStatusStates.includes('failure') && 
                  !otherStatusStates.includes('error'));
               
-              // If there are no other checks, we can approve immediately if mergeable
-              if (otherCheckRuns.length === 0 && otherStatusChecks.length === 0 && pr.mergeable === true) {
-                core.info('No other checks found, PR is mergeable!');
-                core.setOutput('can_approve', 'true');
-                return;
-              }
-              
-              if (allOtherCheckRunsPassed && allOtherStatusChecksPassed && pr.mergeable === true) {
+              if (allOtherCheckRunsPassed && allOtherStatusChecksPassed && currentPr.mergeable === true) {
                 core.info('All other checks passed and PR is mergeable!');
                 core.setOutput('can_approve', 'true');
                 return;
               }
               
               // If any check failed, don't wait
-              const hasFailedCheck = otherCheckRuns.some(run => 
+              const hasFailedCheck = updatedOtherCheckRuns.some(run => 
                 run.status === 'completed' && run.conclusion === 'failure'
-              ) || otherStatusChecks.some(status => status.state === 'failure' || status.state === 'error');
+              ) || updatedOtherStatusChecks.some(status => status.state === 'failure' || status.state === 'error');
               
               if (hasFailedCheck) {
                 core.info('Some checks failed');
@@ -193,10 +246,13 @@ jobs:
                 return;
               }
               
-              const pendingCount = otherCheckRuns.filter(run => run.status !== 'completed').length +
-                                   otherStatusChecks.filter(status => status.state === 'pending').length;
+              const pendingCount = updatedOtherCheckRuns.filter(run => run.status !== 'completed').length +
+                                   updatedOtherStatusChecks.filter(status => status.state === 'pending').length;
               
-              core.info(`Waiting for ${pendingCount} check(s) to complete... (waited ${waited}s)`);
+              if (pendingCount > 0) {
+                core.info(`Waiting for ${pendingCount} check(s) to complete... (waited ${waited}s)`);
+              }
+              
               await new Promise(resolve => setTimeout(resolve, checkInterval * 1000));
               waited += checkInterval;
             }
