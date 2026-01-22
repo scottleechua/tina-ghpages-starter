@@ -82,182 +82,61 @@ jobs:
             core.setOutput('is_dependabot', 'true');
             core.setOutput('number', prNumber.toString());
 
-      - name: Wait for checks and verify mergeable
+      - name: Wait for merge button to be available
         if: steps.pr_number.outputs.is_dependabot == 'true'
         uses: actions/github-script@v7
         id: verify
         with:
           script: |
             const prNumber = parseInt('${{ steps.pr_number.outputs.number }}');
-            const workflowName = '${{ github.workflow }}';
-            const currentRunId = ${{ github.run_id }};
             const maxWait = 300; // 5 minutes max wait
             const checkInterval = 10; // Check every 10 seconds
             let waited = 0;
             
-            // Get the current workflow run to identify its check suite
-            const { data: currentRun } = await github.rest.actions.getWorkflowRun({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: currentRunId
-            });
-            
-            const currentCheckSuiteId = currentRun.check_suite_id;
-            
-            // Get initial PR state
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber
-            });
-            
-            // Check if PR is mergeable (no conflicts)
-            if (pr.mergeable === false) {
-              core.info('PR is not mergeable (has conflicts)');
-              core.setOutput('can_approve', 'false');
-              return;
-            }
-            
-            // Get check runs
-            const { data: checkRuns } = await github.rest.checks.listForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: pr.head.sha
-            });
-            
-            // Filter out this workflow's check runs by check suite ID and name
-            const otherCheckRuns = checkRuns.check_runs.filter(run => {
-              // Exclude check runs from the same check suite (this workflow)
-              if (run.check_suite && run.check_suite.id === currentCheckSuiteId) {
-                return false;
-              }
-              // Also exclude by name as a fallback
-              if (run.name === workflowName || 
-                  run.name.includes('Auto-Approve Dependabot PRs') ||
-                  run.name.includes('Dependabot auto-approve')) {
-                return false;
-              }
-              return true;
-            });
-            
-            // Get combined status (excluding this workflow)
-            const { data: status } = await github.rest.repos.getCombinedStatusForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: pr.head.sha
-            });
-            
-            // Filter status checks to exclude this workflow
-            const otherStatusChecks = status.statuses.filter(status => 
-              status.context !== workflowName &&
-              !status.context.includes('Auto-Approve Dependabot PRs') &&
-              !status.context.includes('Dependabot auto-approve')
-            );
-            
-            // If there are no other checks, approve immediately if mergeable
-            if (otherCheckRuns.length === 0 && otherStatusChecks.length === 0) {
-              if (pr.mergeable === true) {
-                core.info('No other checks found, PR is mergeable - approving immediately!');
-                core.setOutput('can_approve', 'true');
-                return;
-              } else {
-                core.info('No other checks found but PR is not mergeable');
-                core.setOutput('can_approve', 'false');
-                return;
-              }
-            }
-            
-            core.info(`Found ${otherCheckRuns.length} check run(s) and ${otherStatusChecks.length} status check(s) to wait for`);
-            
-            // Wait for other checks to complete
+            // Wait for the merge button to be available (mergeable_state === 'clean')
             while (waited < maxWait) {
-              const { data: currentPr } = await github.rest.pulls.get({
+              const { data: pr } = await github.rest.pulls.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: prNumber
               });
               
-              if (currentPr.mergeable === false) {
-                core.info('PR is not mergeable (has conflicts)');
-                core.setOutput('can_approve', 'false');
-                return;
-              }
+              // Check if merge button is available
+              // mergeable_state: 'clean' = ready to merge (all checks passed, no conflicts)
+              // mergeable_state: 'dirty' = has conflicts
+              // mergeable_state: 'unstable' = checks are still running or failed
+              // mergeable_state: 'blocked' = blocked by branch protection
+              // mergeable_state: null = GitHub is still computing mergeability
               
-              // Get updated check runs
-              const { data: updatedCheckRuns } = await github.rest.checks.listForRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: currentPr.head.sha
-              });
-              
-              const updatedOtherCheckRuns = updatedCheckRuns.check_runs.filter(run => {
-                if (run.check_suite && run.check_suite.id === currentCheckSuiteId) {
-                  return false;
-                }
-                if (run.name === workflowName || 
-                    run.name.includes('Auto-Approve Dependabot PRs') ||
-                    run.name.includes('Dependabot auto-approve')) {
-                  return false;
-                }
-                return true;
-              });
-              
-              // Get updated status
-              const { data: updatedStatus } = await github.rest.repos.getCombinedStatusForRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: currentPr.head.sha
-              });
-              
-              const updatedOtherStatusChecks = updatedStatus.statuses.filter(status => 
-                status.context !== workflowName &&
-                !status.context.includes('Auto-Approve Dependabot PRs') &&
-                !status.context.includes('Dependabot auto-approve')
-              );
-              
-              // Check if all other check runs have passed
-              const allOtherCheckRunsPassed = updatedOtherCheckRuns.length === 0 || 
-                updatedOtherCheckRuns.every(run => 
-                  run.status === 'completed' && 
-                  (run.conclusion === 'success' || run.conclusion === 'skipped')
-                );
-              
-              // Check if all other status checks have passed
-              const otherStatusStates = updatedOtherStatusChecks.map(s => s.state);
-              const allOtherStatusChecksPassed = updatedOtherStatusChecks.length === 0 ||
-                (otherStatusStates.every(state => state === 'success') && 
-                 !otherStatusStates.includes('failure') && 
-                 !otherStatusStates.includes('error'));
-              
-              if (allOtherCheckRunsPassed && allOtherStatusChecksPassed && currentPr.mergeable === true) {
-                core.info('All other checks passed and PR is mergeable!');
+              if (pr.mergeable === true && pr.mergeable_state === 'clean') {
+                core.info('Merge button is available - PR is ready to merge!');
                 core.setOutput('can_approve', 'true');
                 return;
               }
               
-              // If any check failed, don't wait
-              const hasFailedCheck = updatedOtherCheckRuns.some(run => 
-                run.status === 'completed' && run.conclusion === 'failure'
-              ) || updatedOtherStatusChecks.some(status => status.state === 'failure' || status.state === 'error');
-              
-              if (hasFailedCheck) {
-                core.info('Some checks failed');
+              // If PR has conflicts or is blocked, don't wait
+              if (pr.mergeable === false || pr.mergeable_state === 'dirty' || pr.mergeable_state === 'blocked') {
+                core.info(`PR cannot be merged: mergeable=${pr.mergeable}, state=${pr.mergeable_state || 'null'}`);
                 core.setOutput('can_approve', 'false');
                 return;
               }
               
-              const pendingCount = updatedOtherCheckRuns.filter(run => run.status !== 'completed').length +
-                                   updatedOtherStatusChecks.filter(status => status.state === 'pending').length;
-              
-              if (pendingCount > 0) {
-                core.info(`Waiting for ${pendingCount} check(s) to complete... (waited ${waited}s)`);
+              // If mergeable_state is 'unstable' and mergeable is false, checks likely failed
+              if (pr.mergeable_state === 'unstable' && pr.mergeable === false) {
+                core.info('Checks failed - PR is not mergeable');
+                core.setOutput('can_approve', 'false');
+                return;
               }
               
+              // Still waiting for checks to complete
+              // mergeable_state might be null (computing) or 'unstable' (checks running)
+              const stateDisplay = pr.mergeable_state || 'computing';
+              core.info(`Waiting for merge button to become available... (state: ${stateDisplay}, mergeable: ${pr.mergeable}, waited ${waited}s)`);
               await new Promise(resolve => setTimeout(resolve, checkInterval * 1000));
               waited += checkInterval;
             }
             
-            core.info('Timeout waiting for checks');
+            core.info('Timeout waiting for merge button to become available');
             core.setOutput('can_approve', 'false');
 
       - name: Approve PR
