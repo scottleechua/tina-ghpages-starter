@@ -1,0 +1,157 @@
+name: Dependabot auto-approve
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  check_suite:
+    types: [completed]
+  status: {}
+
+permissions:
+  pull-requests: write
+  checks: read
+
+jobs:
+  dependabot:
+    runs-on: ubuntu-latest
+    if: |
+      (github.event.pull_request.user.login == 'dependabot[bot]' || 
+       github.event.pull_request.user.login == 'dependabot-preview[bot]') ||
+      github.event_name == 'check_suite' ||
+      github.event_name == 'status'
+    steps:
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v1
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Get PR number and verify Dependabot
+        id: pr_number
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let prNumber;
+            let pr;
+            
+            if (context.payload.pull_request?.number) {
+              prNumber = context.payload.pull_request.number;
+            } else {
+              // For check_suite and status events, find PR by commit SHA
+              const sha = context.payload.check_suite?.head_sha || 
+                          context.payload.commit?.sha || 
+                          context.sha;
+              
+              if (sha) {
+                const { data: prsByCommit } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  commit_sha: sha
+                });
+                
+                const openPR = prsByCommit.find(pr => pr.state === 'open');
+                if (openPR) {
+                  prNumber = openPR.number;
+                }
+              }
+            }
+            
+            if (!prNumber) {
+              core.info('Could not find PR number, skipping...');
+              core.setOutput('is_dependabot', 'false');
+              return;
+            }
+            
+            // Get PR details to verify it's from Dependabot
+            pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            
+            const isDependabot = pr.data.user.login === 'dependabot[bot]' || 
+                                 pr.data.user.login === 'dependabot-preview[bot]';
+            
+            if (!isDependabot) {
+              core.info(`PR #${prNumber} is not from Dependabot, skipping...`);
+              core.setOutput('is_dependabot', 'false');
+              return;
+            }
+            
+            core.setOutput('is_dependabot', 'true');
+            core.setOutput('number', prNumber.toString());
+
+      - name: Wait for checks and verify mergeable
+        if: steps.pr_number.outputs.is_dependabot == 'true'
+        uses: actions/github-script@v7
+        id: verify
+        with:
+          script: |
+            const prNumber = parseInt('${{ steps.pr_number.outputs.number }}');
+            const maxWait = 300; // 5 minutes max wait
+            const checkInterval = 10; // Check every 10 seconds
+            let waited = 0;
+            
+            while (waited < maxWait) {
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              
+              // Check if PR is mergeable (no conflicts)
+              if (pr.mergeable === false) {
+                core.info('PR is not mergeable (has conflicts)');
+                core.setOutput('can_approve', 'false');
+                return;
+              }
+              
+              // Get combined status
+              const { data: status } = await github.rest.repos.getCombinedStatusForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: pr.head.sha
+              });
+              
+              // Get check runs
+              const { data: checkRuns } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: pr.head.sha
+              });
+              
+              const allChecksPassed = 
+                status.state === 'success' &&
+                checkRuns.check_runs.every(run => 
+                  run.status === 'completed' && 
+                  (run.conclusion === 'success' || run.conclusion === 'skipped')
+                );
+              
+              if (allChecksPassed && pr.mergeable === true) {
+                core.info('All checks passed and PR is mergeable!');
+                core.setOutput('can_approve', 'true');
+                return;
+              }
+              
+              // If status is failure, don't wait
+              if (status.state === 'failure') {
+                core.info('Status checks failed');
+                core.setOutput('can_approve', 'false');
+                return;
+              }
+              
+              core.info(`Waiting for checks to complete... (waited ${waited}s)`);
+              await new Promise(resolve => setTimeout(resolve, checkInterval * 1000));
+              waited += checkInterval;
+            }
+            
+            core.info('Timeout waiting for checks');
+            core.setOutput('can_approve', 'false');
+
+      - name: Approve PR
+        if: steps.verify.outputs.can_approve == 'true'
+        run: |
+          gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url || format('https://github.com/{0}/pull/{1}', github.repository, steps.pr_number.outputs.number) }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
