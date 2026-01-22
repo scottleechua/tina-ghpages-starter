@@ -1,169 +1,23 @@
-name: Auto-Approve Dependabot PRs
+name: Auto-merge Dependabot PRs
 
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened]
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
 
 permissions:
   pull-requests: write
   contents: write
-  checks: read
-  actions: read
 
 jobs:
-  dependabot:
+  auto-merge:
     runs-on: ubuntu-latest
-    # Only run for Dependabot PRs
-    if: github.event.pull_request.user.login == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot-preview[bot]'
+    if: github.actor == 'dependabot[bot]'
     steps:
-      - name: Dependabot metadata
-        id: metadata
-        uses: dependabot/fetch-metadata@v1
+      - name: Enable auto-merge
+        uses: peter-evans/enable-pull-request-automerge@v3
         with:
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
-      
-      - name: Get PR number
-        id: pr_number
-        run: |
-          echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-
-      - name: Wait for merge button to be available
-        uses: actions/github-script@v7
-        id: verify
-        with:
-          script: |
-            const prNumber = ${{ github.event.pull_request.number }};
-            const workflowName = '${{ github.workflow }}';
-            const currentRunId = ${{ github.run_id }};
-            const maxWait = 300; // 5 minutes max wait
-            const checkInterval = 10; // Check every 10 seconds
-            let waited = 0;
-            
-            // Get current workflow run to identify its check suite
-            const { data: currentRun } = await github.rest.actions.getWorkflowRun({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: currentRunId
-            });
-            const currentCheckSuiteId = currentRun.check_suite_id;
-            
-            // Wait for the merge button to be available (mergeable_state === 'clean')
-            while (waited < maxWait) {
-              const { data: pr } = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: prNumber
-              });
-              
-              // Check if PR has conflicts or is blocked
-              if (pr.mergeable === false || pr.mergeable_state === 'dirty' || pr.mergeable_state === 'blocked') {
-                core.info(`PR cannot be merged: mergeable=${pr.mergeable}, state=${pr.mergeable_state || 'null'}`);
-                core.setOutput('can_approve', 'false');
-                return;
-              }
-              
-              // Get check runs and filter out this workflow
-              const { data: checkRuns } = await github.rest.checks.listForRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: pr.head.sha
-              });
-              
-              // Filter out this workflow's check runs
-              const otherCheckRuns = checkRuns.check_runs.filter(run => {
-                // Exclude by check suite ID
-                if (run.check_suite && run.check_suite.id === currentCheckSuiteId) {
-                  return false;
-                }
-                // Exclude by workflow name
-                if (run.name === workflowName || 
-                    run.name.includes('Auto-Approve Dependabot PRs')) {
-                  return false;
-                }
-                return true;
-              });
-              
-              // Get status checks and filter out this workflow
-              const { data: status } = await github.rest.repos.getCombinedStatusForRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: pr.head.sha
-              });
-              
-              const otherStatusChecks = status.statuses.filter(s => 
-                s.context !== workflowName &&
-                !s.context.includes('Auto-Approve Dependabot PRs')
-              );
-              
-              // Check if all other checks have passed
-              const allOtherCheckRunsPassed = otherCheckRuns.length === 0 || 
-                otherCheckRuns.every(run => 
-                  run.status === 'completed' && 
-                  (run.conclusion === 'success' || run.conclusion === 'skipped')
-                );
-              
-              const allOtherStatusChecksPassed = otherStatusChecks.length === 0 ||
-                otherStatusChecks.every(s => s.state === 'success');
-              
-              // If all other checks passed and PR is mergeable, approve
-              if (pr.mergeable === true && allOtherCheckRunsPassed && allOtherStatusChecksPassed) {
-                core.info('All other checks passed and PR is mergeable!');
-                core.setOutput('can_approve', 'true');
-                return;
-              }
-              
-              // If any check failed, don't wait
-              const hasFailedCheck = otherCheckRuns.some(run => 
-                run.status === 'completed' && run.conclusion === 'failure'
-              ) || otherStatusChecks.some(s => s.state === 'failure' || s.state === 'error');
-              
-              if (hasFailedCheck) {
-                core.info('Some checks failed');
-                core.setOutput('can_approve', 'false');
-                return;
-              }
-              
-              const pendingCount = otherCheckRuns.filter(run => run.status !== 'completed').length +
-                                   otherStatusChecks.filter(s => s.state === 'pending').length;
-              
-              if (pendingCount > 0) {
-                core.info(`Waiting for ${pendingCount} other check(s) to complete... (waited ${waited}s)`);
-              } else {
-                core.info(`All checks passed, verifying mergeability... (waited ${waited}s)`);
-              }
-              
-              await new Promise(resolve => setTimeout(resolve, checkInterval * 1000));
-              waited += checkInterval;
-            }
-            
-            core.info('Timeout waiting for checks to complete');
-            core.setOutput('can_approve', 'false');
-
-      - name: Approve PR
-        if: steps.verify.outputs.can_approve == 'true'
-        run: |
-          gh pr review --approve "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Merge PR
-        if: steps.verify.outputs.can_approve == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const prNumber = ${{ github.event.pull_request.number }};
-            
-            try {
-              await github.rest.pulls.merge({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: prNumber,
-                merge_method: 'squash'
-              });
-              
-              core.info(`Successfully merged Dependabot PR #${prNumber}`);
-            } catch (error) {
-              core.error(`Failed to merge PR #${prNumber}: ${error.message}`);
-              throw error;
-            }
+          merge-method: squash
